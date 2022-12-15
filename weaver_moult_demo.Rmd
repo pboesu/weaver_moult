@@ -1,0 +1,155 @@
+---
+title: "B: Worked examples of fitting extended moult models"
+author: ""
+date: ""
+output:
+  pdf_document: default
+  word_document: default
+  html_document:
+    df_print: paged
+---
+
+## The moultmcmc package: Bayesian inference for moult phenology models
+
+In most free-living animal populations moult progression and duration in individuals can not be observed fully.
+Instead snapshot measurements of (re)captured individuals are typically used to infer these parameters on a population level.
+As an additional complication, recording of moult in the field may take various forms both in terms of the subset of the population that is sampled and whether moult is recorded as a categorical state, or a (semi-)continuous progression.
+
+[Underhill & Zucchini (1989; Ibis 130:358)](https://doi.org/10.1111/j.1474-919X.1988.tb00993.x) proposed a general modelling framework to accommodate many of these features, implemented in the [R package `moult`](https://cran.r-project.org/package=moult) [(Erni et al. 2013; J Stat Soft 52:8)](http://dx.doi.org/10.18637/jss.v052.i08).
+
+`moultmcmc` implements a Bayesian inference framework for this class of models with the aim of (eventually) allowing the inclusion of hierarchical model structures to accommodate 
+1) the integration of moult data sets using different modes of recording, 
+2) individual heterogeneity in moult timing, and 
+3) misclassified observations of non-moulting birds
+
+`moultmcmc` implements fast inference for these models using Hamiltonian Monte Carlo samplers from Stan (https://mc-stan.org/). The currently implemented models are described in detail in Boersch-Supan et al. (2022) (https://doi.org/10.48550/arXiv.2205.12120) and the vignette 'Moult data likelihoods' (https://pboesu.github.io/moultmcmc/articles/moult-likelihoods.html).
+
+## Installation
+The package `moultmcmc` is built around pre-compiled Stan models, the easiest and quickest way of installing it is to install the package from R-universe use the following code:
+
+```{r eval=FALSE}
+install.packages("moultmcmc", repos = "https://pboesu.r-universe.dev")
+```
+On Mac and Windows systems this will make use of pre-compiled binaries, which means the models can be run  without having to install a C++ compiler. On Linux this will install the package from a source tarball. Because of the way the Stan models are currently structured, compilation from source can be a lengthy process (15-45 minutes), depending on system setup and compiler toolchain.
+
+To install `moultmcmc` from the github source (not generally recommended for Windows users) use the following code. This requires a working C++ compiler and a working installation of [rstan](https://mc-stan.org/rstan):
+
+```{r eval=FALSE}
+#not generally recommended for Windows/MacOS users
+install.packages("remotes")
+remotes::install_github("pboesu/moultmcmc")
+```
+
+## Basic usage
+Basic usage is described in the vignette 'Getting started with moultmcmc' (https://pboesu.github.io/moultmcmc/articles/getting-started.html).
+
+## Fitting standard and extended moult models to a subset of the Cape Weaver data
+
+To fit the models described in the main text we load the necassary R packages and read in the example data set. This is a subset of the Cape Weaver data from HDO. The dataset has five columns:
+- ringno_season: a unique identifier of individuals encountered in a specific season
+- yday: day of year (since January 1)
+- yday: days since day of year 200 (this shifted variable ensures active moult falls within a 365 contiguous day period)
+- pfmg: proportion of feather mass grown based on relative feather masses from Underhill & Jouventin 1995.
+- sex: factor variable with levels "female", "male", "unknown"
+
+```{r}
+library(moultmcmc) # for model fitting
+library(ggplot2) # for plotting
+
+#read data
+juv_cw <- read.csv('juvenile_weavers_example_data.csv', stringsAsFactors = TRUE)
+#plot data
+ggplot(juv_cw, aes(x = yday200, y = pfmg)) + geom_point() + facet_wrap(~sex)
+```
+
+We can then fit the standard models using the `moultmcmc` function. Each MCMC chain takes about 30 seconds to run for these models.
+
+```{r message=FALSE, warning = FALSE, results="hide"}
+T2 <- moultmcmc(date_column = 'yday200',
+                moult_column = 'pfmg',
+                start_formula = ~ sex,
+                duration_formula = ~ sex,
+                type = 2,
+                data = juv_cw,
+                chains = 2)
+
+
+T3 <- moultmcmc(date_column = 'yday200',
+                moult_column = 'pfmg',
+                start_formula = ~ sex,
+                duration_formula = ~ sex,
+                type = 3,
+                data = juv_cw,
+                chains = 2)# 35 sec per chain
+```
+
+
+The extended moult models are also fitted using the `moultmcmc` function. The lumped model variants are activated by setting the argument `lump_non_moult = TRUE`
+
+```{r results="hide"}
+T2L <- moultmcmc(date_column = 'yday200',
+                moult_column = 'pfmg',
+                start_formula = ~ sex,
+                duration_formula = ~sex,
+                type = 2,
+                lump_non_moult = TRUE,
+                data = juv_cw,
+                chains = 2)#32 sec per chain
+```
+
+and the recaptures models are activated by providing individual identifiers to the `id_column` argument. The recaptures models are computationally much more challenging. Each chain for this example takes about 5 minutes to run. If multiple cores are available it is therefore recommended to run chains in parallel by setting the `cores` argument to greater than one.
+
+```{r message=FALSE, warning = FALSE,results="hide"}
+T2LR <- moultmcmc(date_column = 'yday200',
+                 moult_column = 'pfmg',
+                 id_column = 'ringno_season',
+                 start_formula = ~ sex,
+                 duration_formula = ~sex,
+                 type = 2,
+                 lump_non_moult = TRUE,
+                 data = juv_cw,
+                 chains = 2, cores = 2, iter = 1000)#c. 5 mins per chain
+
+T3R <- moultmcmc(date_column = 'yday200',
+                  moult_column = 'pfmg',
+                  id_column = 'ringno_season',
+                  start_formula = ~ sex,
+                  duration_formula = ~sex,
+                  type = 3,
+                  data = juv_cw,
+                  chains = 2, cores = 2, iter = 1000)#c. 5 minutes per chain
+
+```
+
+
+Parameter tables for the fitted models can be extracted using the `summary` command:
+
+```{r eval=FALSE}
+summary(T2L)
+```
+
+```{r echo=FALSE}
+knitr::kable(summary(T2L), digits = 2)
+```
+
+A basic visual summary can be created using the `moult_plot` function. Note that by default this only provides a moult trajectory for the intercepts of the linear predictor. In this particular case this would be the "female" group of the data.
+```{r}
+moult_plot(T2LR)
+```
+
+more elaborate plots can be created by providing the desired covariate data to the `newdata` argument of `moult_plot` (in a similar way as most `predict` methods in R work):
+
+```{r}
+prediction_data <- data.frame(sex = factor(c('female','male','unknown')))
+moult_plot(T2LR, newdata = prediction_data)
+```
+
+And using the facetting capabilities of `ggplot` (https://ggplot2-book.org/facet.html), the group-specific estimates can be shown in separate panels as well:
+```{r}
+moult_plot(T2LR, newdata = prediction_data) + facet_wrap(~sex)
+```
+
+## Session Information
+```{r}
+sessionInfo()
+```
